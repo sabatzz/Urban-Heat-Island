@@ -24,8 +24,8 @@ jobs:
           # Destination: container $web + SAS (SAS secret must start with '?')
           DEST="https://${{ secrets.AZURE_STORAGE_ACCOUNT }}.blob.core.windows.net/\$web${{ secrets.AZURE_STORAGE_SAS }}"
 
-          # Upload main file
+          # Upload index.html to root of $web
           "$AZCOPY" copy "index.html" "$DEST" --overwrite=true
 
-          # Upload data folder contents
-          "$AZCOPY" copy "data/*" "$DEST" --recursive=true --overwrite=true
+          # Upload whole data/ folder into $web/data/
+          "$AZCOPY" copy "data" "$DEST/data" --recursive=true --overwrite=true
