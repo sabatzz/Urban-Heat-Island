@@ -1,0 +1,11 @@
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# duże dane (nie commituj)
+processing/input/
+*.tif
+*.TIF
+*.zip
