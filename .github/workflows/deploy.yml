@@ -1,0 +1,21 @@
+name: Deploy to Azure Storage Static Website (SAS)
+
+on:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Upload index.html and data/ to $web using azcopy
+        run: |
+          curl -L https://aka.ms/downloadazcopy-v10-linux | tar -xz
+          AZCOPY=$(find . -type f -name azcopy | head -n 1)
+
+          DEST="https://${{ secrets.AZURE_STORAGE_ACCOUNT }}.blob.core.windows.net/${{ secrets.AZURE_STORAGE_CONTAINER }}${{ secrets.AZURE_STORAGE_SAS }}"
+
+          $AZCOPY copy "index.html" "$DEST" --overwrite=true
+          $AZCOPY copy "data" "$DEST/data" --recursive=true --overwrite=true
