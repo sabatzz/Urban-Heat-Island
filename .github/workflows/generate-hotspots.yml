@@ -1,0 +1,38 @@
+name: Generate hotspots from satellite API and upload to Azure
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pystac-client planetary-computer rasterio numpy
+
+      - name: Run generator
+        run: |
+          python processing/make_hotspots_from_api.py
+
+      - name: Upload generated GeoJSON to Azure $web
+        shell: bash
+        run: |
+          set -e
+          curl -L https://aka.ms/downloadazcopy-v10-linux | tar -xz
+          AZCOPY=$(find . -type f -name azcopy | head -n 1)
+          chmod +x "$AZCOPY"
+
+          CONTAINER_URL="https://${{ secrets.AZURE_STORAGE_ACCOUNT }}.blob.core.windows.net/\$web${{ secrets.AZURE_STORAGE_SAS }}"
+
+          # wrzucamy tylko nowe hotspoty (zostawia resztę bez zmian)
+          "$AZCOPY" copy "data/hotspots_*.geojson" "$CONTAINER_URL" --overwrite=true
