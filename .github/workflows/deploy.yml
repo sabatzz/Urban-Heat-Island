@@ -16,16 +16,15 @@ jobs:
         run: |
           set -e
 
-          # Download azcopy
           curl -L https://aka.ms/downloadazcopy-v10-linux | tar -xz
           AZCOPY=$(find . -type f -name azcopy | head -n 1)
           chmod +x "$AZCOPY"
 
-          # Destination: container $web + SAS (SAS secret must start with '?')
-          DEST="https://${{ secrets.AZURE_STORAGE_ACCOUNT }}.blob.core.windows.net/\$web${{ secrets.AZURE_STORAGE_SAS }}"
+          # URL kontenera $web + SAS (sekret musi zaczynać się od '?')
+          CONTAINER_URL="https://${{ secrets.AZURE_STORAGE_ACCOUNT }}.blob.core.windows.net/\$web${{ secrets.AZURE_STORAGE_SAS }}"
 
-          # Upload index.html to root of $web
-          "$AZCOPY" copy "index.html" "$DEST" --overwrite=true
+          # index.html do root
+          "$AZCOPY" copy "index.html" "$CONTAINER_URL" --overwrite=true
 
-          # Upload whole data/ folder into $web/data/
-          "$AZCOPY" copy "data" "$DEST/data" --recursive=true --overwrite=true
+          # cały folder data/ (zachowa ścieżkę data/...) do kontenera
+          "$AZCOPY" copy "data" "$CONTAINER_URL" --recursive=true --overwrite=true
