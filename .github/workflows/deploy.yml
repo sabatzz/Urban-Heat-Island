@@ -8,16 +8,24 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Upload index.html and data/ to $web using azcopy
+      - name: Upload site to $web using azcopy (SAS)
         shell: bash
         run: |
           set -e
+
+          # Download azcopy
           curl -L https://aka.ms/downloadazcopy-v10-linux | tar -xz
           AZCOPY=$(find . -type f -name azcopy | head -n 1)
+          chmod +x "$AZCOPY"
 
+          # Destination: container $web + SAS (SAS secret must start with '?')
           DEST="https://${{ secrets.AZURE_STORAGE_ACCOUNT }}.blob.core.windows.net/\$web${{ secrets.AZURE_STORAGE_SAS }}"
 
-          $AZCOPY copy "index.html" "$DEST" --overwrite=true
-          $AZCOPY copy "data" "$DEST/data" --recursive=true --overwrite=true
+          # Upload main file
+          "$AZCOPY" copy "index.html" "$DEST" --overwrite=true
+
+          # Upload data folder contents
+          "$AZCOPY" copy "data/*" "$DEST" --recursive=true --overwrite=true
