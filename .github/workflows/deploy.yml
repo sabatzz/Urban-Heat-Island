@@ -11,11 +11,13 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Upload index.html and data/ to $web using azcopy
+        shell: bash
         run: |
+          set -e
           curl -L https://aka.ms/downloadazcopy-v10-linux | tar -xz
           AZCOPY=$(find . -type f -name azcopy | head -n 1)
 
-          DEST="https://${{ secrets.AZURE_STORAGE_ACCOUNT }}.blob.core.windows.net/${{ secrets.AZURE_STORAGE_CONTAINER }}${{ secrets.AZURE_STORAGE_SAS }}"
+          DEST="https://${{ secrets.AZURE_STORAGE_ACCOUNT }}.blob.core.windows.net/\$web${{ secrets.AZURE_STORAGE_SAS }}"
 
           $AZCOPY copy "index.html" "$DEST" --overwrite=true
           $AZCOPY copy "data" "$DEST/data" --recursive=true --overwrite=true
