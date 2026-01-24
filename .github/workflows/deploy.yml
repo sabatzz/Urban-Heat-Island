@@ -3,10 +3,16 @@ name: Deploy to Azure Storage Static Website (SAS)
 on:
   push:
     branches: [ "main" ]
+    paths:
+      - "index.html"
+      - "data/**"
+      - ".github/workflows/deploy.yml"
+  workflow_dispatch: {}
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -20,11 +26,16 @@ jobs:
           AZCOPY=$(find . -type f -name azcopy | head -n 1)
           chmod +x "$AZCOPY"
 
-          # URL kontenera $web + SAS (sekret musi zaczynać się od '?')
-          CONTAINER_URL="https://${{ secrets.AZURE_STORAGE_ACCOUNT }}.blob.core.windows.net/\$web${{ secrets.AZURE_STORAGE_SAS }}"
+          SAS="${{ secrets.AZURE_STORAGE_SAS }}"
+          if [[ "$SAS" != \?* ]]; then
+            SAS="?$SAS"
+          fi
+
+          CONTAINER_URL="https://${{ secrets.AZURE_STORAGE_ACCOUNT }}.blob.core.windows.net/\$web${SAS}"
 
           # index.html do root
           "$AZCOPY" copy "index.html" "$CONTAINER_URL" --overwrite=true
 
-          # cały folder data/ (zachowa ścieżkę data/...) do kontenera
-          "$AZCOPY" copy "data" "$CONTAINER_URL" --recursive=true --overwrite=true
+          # data/ do root (czyli powstanie $web/data/...)
+          # jeśli chcesz NIE publikować skryptów, wyklucz processing
+          "$AZCOPY" copy "data" "$CONTAINER_URL" --recursive --overwrite=true --exclude-path "processing"

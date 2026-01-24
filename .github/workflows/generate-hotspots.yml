@@ -22,9 +22,9 @@ jobs:
 
       - name: Run generator
         run: |
-          python processing/make_hotspots_from_api.py
+          python data/processing/make_hotspots_from_api.py
 
-      - name: Upload generated GeoJSON to Azure $web
+      - name: Upload generated GeoJSON to Azure ($web/data) using azcopy (SAS)
         shell: bash
         run: |
           set -e
@@ -32,7 +32,12 @@ jobs:
           AZCOPY=$(find . -type f -name azcopy | head -n 1)
           chmod +x "$AZCOPY"
 
-          CONTAINER_URL="https://${{ secrets.AZURE_STORAGE_ACCOUNT }}.blob.core.windows.net/\$web${{ secrets.AZURE_STORAGE_SAS }}"
+          SAS="${{ secrets.AZURE_STORAGE_SAS }}"
+          if [[ "$SAS" != \?* ]]; then
+            SAS="?$SAS"
+          fi
 
-          # wrzucamy tylko nowe hotspoty (zostawia resztę bez zmian)
-          "$AZCOPY" copy "data/hotspots_*.geojson" "$CONTAINER_URL" --overwrite=true
+          CONTAINER_URL="https://${{ secrets.AZURE_STORAGE_ACCOUNT }}.blob.core.windows.net/\$web${SAS}"
+
+          # upload do katalogu data/ w $web (zgodnie z fetch: data/hotspots_....geojson)
+          "$AZCOPY" copy "data/hotspots_*.geojson" "${CONTAINER_URL}/data/" --overwrite=true
