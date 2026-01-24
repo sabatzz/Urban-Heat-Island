@@ -22,7 +22,7 @@ jobs:
 
       - name: Run generator
         run: |
-          python data/processing/make_hotspots_from_api.py
+          python processing/make_hotspots_from_api.py
 
       - name: Upload generated GeoJSON to Azure $web
         shell: bash
