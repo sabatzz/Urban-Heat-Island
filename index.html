@@ -6,11 +6,17 @@
   <title>Urban Heat Island – Kraków</title>
 
   <!-- Leaflet -->
-  <link
-    rel="stylesheet"
-    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-  />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <!-- Proj4js -->
+  <script src="https://cdn.jsdelivr.net/npm/proj4@2.9.2/dist/proj4.js"></script>
+
+  <!-- Leaflet Boundary Canvas -->
+  <script src="https://cdn.jsdelivr.net/npm/leaflet-boundary-canvas@1.0.0/src/BoundaryCanvas.js"></script>
+
+  <!-- Turf (point in polygon) -->
+  <script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
 
   <style>
     body { margin: 0; font-family: system-ui, Arial, sans-serif; }
@@ -18,84 +24,335 @@
     #map { height: calc(100vh - 54px); }
     .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
     select { padding: 6px; }
+    .hint { color:#666; font-size: 12px; }
+
+    .legend {
+      background: #fff;
+      padding: 8px 10px;
+      border-radius: 10px;
+      box-shadow: 0 1px 6px rgba(0,0,0,.2);
+      font-size: 12px;
+      line-height: 1.2;
+    }
+    .legend .bar {
+      width: 160px;
+      height: 10px;
+      border-radius: 6px;
+      margin: 6px 0 4px 0;
+      background: linear-gradient(to right, rgb(255,235,0), rgb(255,0,0));
+    }
+    .legend .row2 { display:flex; justify-content:space-between; gap:10px; }
   </style>
 </head>
+
 <body>
   <header>
     <div class="row">
       <strong>Urban Heat Island – Kraków</strong>
+
       <label>
         Data:
         <select id="dateSelect">
-          <option value="2025-07-01">2025-07-01</option>
+          <option value="2025-06-05">2025-06-05</option>
+          <option value="2025-06-21">2025-06-21</option>
+          <option value="2025-08-16">2025-08-16</option>
         </select>
       </label>
+
       <span id="stats"></span>
+      <span id="msg" class="hint"></span>
     </div>
   </header>
 
   <div id="map"></div>
 
   <script>
-    // 1) mapa
+
+    function setMsg(t) { document.getElementById("msg").textContent = t || ""; }
+
+    // gradient
+    function lerp(a, b, t) { return a + (b - a) * t; }
+    function clamp01(x) { return Math.max(0, Math.min(1, x)); }
+
+    function colorForTempGradient(t, tMin, tMax) {
+      if (!Number.isFinite(t) || !Number.isFinite(tMin) || !Number.isFinite(tMax) || tMax <= tMin) {
+        return "rgb(255,0,255)"; 
+      }
+      const x = clamp01((t - tMin) / (tMax - tMin));
+      
+      // yellow (255,235,0) -> red (255,0,0)
+      const r = 255;
+      const g = Math.round(lerp(235, 0, x));
+      const b = 0;
+
+      return `rgb(${r},${g},${b})`;
+    }
+
+    function getTempStatsFromFeatures(features) {
+      let min = Infinity, max = -Infinity, sum = 0, n = 0;
+      for (const f of features || []) {
+        const t = Number(f?.properties?.temp);
+        if (!Number.isFinite(t)) continue;
+        min = Math.min(min, t);
+        max = Math.max(max, t);
+        sum += t;
+        n++;
+      }
+      return { min, max, avg: n ? sum / n : NaN, n };
+    }
+
+    if (typeof proj4 === "undefined") {
+      alert("proj4 nie załadował się (CDN zablokowane). Sprawdź konsolę F12.");
+    }
+
+    // EPSG:2180 (PUWG 1992 / CS92)
+    proj4.defs("EPSG:2180",
+      "+proj=tmerc +lat_0=0 +lon_0=19 +k=0.9993 +x_0=500000 +y_0=-5300000 " +
+      "+ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs"
+    );
+
+    // EPSG:32634 (UTM 34N)
+    proj4.defs("EPSG:32634", "+proj=utm +zone=34 +datum=WGS84 +units=m +no_defs");
+
+    function looksLikeKrakow(lon, lat) {
+      return lon > 19.70 && lon < 20.20 && lat > 49.90 && lat < 50.20;
+    }
+
+    function coordsToLatLngSmart(coords) {
+      const x = coords[0], y = coords[1];
+
+      if (Math.abs(x) <= 180 && Math.abs(y) <= 90) {
+        return L.latLng(y, x);
+      }
+
+      let lonlat2180 = null;
+      try { lonlat2180 = proj4("EPSG:2180", "EPSG:4326", [x, y]); } catch (e) {}
+      if (lonlat2180 && looksLikeKrakow(lonlat2180[0], lonlat2180[1])) {
+        return L.latLng(lonlat2180[1], lonlat2180[0]);
+      }
+
+      let lonlat32634 = null;
+      try { lonlat32634 = proj4("EPSG:32634", "EPSG:4326", [x, y]); } catch (e) {}
+      if (lonlat32634 && looksLikeKrakow(lonlat32634[0], lonlat32634[1])) {
+        return L.latLng(lonlat32634[1], lonlat32634[0]);
+      }
+
+      if (lonlat2180) return L.latLng(lonlat2180[1], lonlat2180[0]);
+      if (lonlat32634) return L.latLng(lonlat32634[1], lonlat32634[0]);
+
+      return L.latLng(0, 0);
+    }
+
+    // =========================
+    //  Mapa (OSM baza)
+    // =========================
     const map = L.map('map').setView([50.0647, 19.9450], 12);
+
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 19,
       attribution: '&copy; OpenStreetMap'
     }).addTo(map);
 
-    let layer;
+    // =========================
+    //         Satelita
+    // =========================
+    const esriUrl =
+      "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
 
-    function colorForTemp(t) {
-      // prosty podział - możesz zmienić
-      if (t >= 45) return 'red';
-      if (t >= 40) return 'orange';
-      if (t >= 35) return 'gold';
-      return 'blue';
+    const krakowBoundaryUrl =
+      "https://msip.um.krakow.pl/arcgis/rest/services/Obserwatorium/K07_PODZIAL_ADM/MapServer/6/query" +
+      "?where=1%3D1&outFields=nazwa&returnGeometry=true&f=geojson&outSR=4326";
+
+    let boundaryLayer = null;
+    let satLayer = null;
+    let opacityControlAdded = false;
+    let krkBoundaryFeature = null;
+
+    function addOpacitySlider(layer, startPercent) {
+      if (opacityControlAdded) return;
+      opacityControlAdded = true;
+
+      const opacityControl = L.control({ position: 'topright' });
+      opacityControl.onAdd = function () {
+        const div = L.DomUtil.create('div', 'opacity-control');
+        div.style.background = 'white';
+        div.style.padding = '8px';
+        div.style.borderRadius = '8px';
+        div.style.boxShadow = '0 1px 6px rgba(0,0,0,.2)';
+        div.innerHTML = `
+          <label style="font-size:12px; display:block">
+            Satelita: <span id="opVal">${startPercent}</span>%
+            <input id="opRange" type="range" min="0" max="100" value="${startPercent}" style="width:140px">
+          </label>
+        `;
+        L.DomEvent.disableClickPropagation(div);
+        L.DomEvent.disableScrollPropagation(div);
+        return div;
+      };
+      opacityControl.addTo(map);
+
+      setTimeout(() => {
+        const r = document.getElementById('opRange');
+        const v = document.getElementById('opVal');
+        if (!r || !v) return;
+        r.addEventListener('input', () => {
+          v.textContent = r.value;
+          layer.setOpacity(Number(r.value) / 100);
+        });
+      }, 0);
     }
 
+    async function loadBoundaryAndSatellite() {
+      setMsg("Wczytuję granice Krakowa i satelitę…");
+
+      const res = await fetch(krakowBoundaryUrl);
+      if (!res.ok) throw new Error("Nie mogę pobrać granic Krakowa (MSIP).");
+      const boundaryGeoJson = await res.json();
+
+      krkBoundaryFeature = (boundaryGeoJson.type === "FeatureCollection")
+        ? boundaryGeoJson.features?.[0]
+        : boundaryGeoJson;
+
+      if (boundaryLayer) boundaryLayer.remove();
+      boundaryLayer = L.geoJSON(boundaryGeoJson, {
+        style: { color: "#111", weight: 2, fill: false }
+      }).addTo(map);
+
+      map.fitBounds(boundaryLayer.getBounds());
+
+      const baseSat = L.tileLayer(esriUrl, { maxZoom: 19, attribution: "Tiles &copy; Esri" });
+      satLayer = L.TileLayer.BoundaryCanvas.createFromLayer(baseSat, { boundary: boundaryGeoJson });
+      satLayer.setOpacity(0.55);
+      satLayer.addTo(map);
+
+      addOpacitySlider(satLayer, 55);
+      setMsg("");
+    }
+
+    // =========================
+    //     Legenda gradientu
+    // =========================
+    let legendControl = null;
+    function setLegend(min, max, unit) {
+      if (!legendControl) {
+        legendControl = L.control({ position: "bottomright" });
+        legendControl.onAdd = function () {
+          const div = L.DomUtil.create("div", "legend");
+          div.innerHTML = `
+            <div><b>Temperatura</b> <span id="legUnit"></span></div>
+            <div class="bar"></div>
+            <div class="row2">
+              <span id="legMin"></span>
+              <span id="legMax"></span>
+            </div>
+          `;
+          L.DomEvent.disableClickPropagation(div);
+          return div;
+        };
+        legendControl.addTo(map);
+      }
+      document.getElementById("legMin").textContent = Number.isFinite(min) ? min.toFixed(1) : "-";
+      document.getElementById("legMax").textContent = Number.isFinite(max) ? max.toFixed(1) : "-";
+      document.getElementById("legUnit").textContent = unit ? `(${unit})` : "";
+    }
+
+      function isPointInKrakow(feature) {
+    if (!krkBoundaryFeature) return true; 
+
+    const coords = feature?.geometry?.coordinates;
+    if (!coords || coords.length < 2) return false;
+
+    const latlng = coordsToLatLngSmart(coords);
+
+    const pt = turf.point([latlng.lng, latlng.lat]);
+
+    return turf.booleanPointInPolygon(pt, krkBoundaryFeature);
+  }
+
+
+    // =========================
+    //        Hotspoty
+    // =========================
+    let hotspotsLayer = null;
+
     async function loadHotspots(date) {
-      // 2) wczytaj geojson z pliku (na start)
       const url = `data/hotspots_${date}.geojson`;
       const res = await fetch(url);
-      if (!res.ok) throw new Error(`Nie mogę wczytać: ${url}`);
+      if (!res.ok) throw new Error(`Nie mogę wczytać: ${url} (HTTP ${res.status})`);
       const geojson = await res.json();
 
-      // usuń poprzednią warstwę
-      if (layer) layer.remove();
+      const filteredFeatures = (geojson.features || []).filter(isPointInKrakow);
+      const geojsonFiltered = { ...geojson, features: filteredFeatures };
 
-      // dodaj punkty
-      layer = L.geoJSON(geojson, {
+      console.log("HOTSPOTS features:", geojson.features?.length);
+      console.log("FIRST raw coords:", geojson.features?.[0]?.geometry?.coordinates);
+
+      if (hotspotsLayer) hotspotsLayer.remove();
+
+        const unit = geojson?.properties?.unit || geojson?.features?.[0]?.properties?.unit || "°C";
+
+        const stats = getTempStatsFromFeatures(geojsonFiltered.features);
+
+        // header
+        if (stats.n > 0 && Number.isFinite(stats.min) && Number.isFinite(stats.max)) {
+          const avgTxt = Number.isFinite(stats.avg) ? stats.avg.toFixed(1) : "-";
+          document.getElementById('stats').textContent =
+            `min: ${stats.min.toFixed(1)} | avg: ${avgTxt} | max: ${stats.max.toFixed(1)} | n=${stats.n}`;
+        } else {
+          document.getElementById('stats').textContent =
+            "Brak punktów w granicach Krakowa dla tej daty.";
+        }
+
+        // legenda
+        if (stats.n > 0 && Number.isFinite(stats.min) && Number.isFinite(stats.max)) {
+          setLegend(stats.min, stats.max, unit);
+        } else {
+          setLegend(NaN, NaN, unit);
+        }
+
+
+      hotspotsLayer = L.geoJSON(geojsonFiltered, {
+        coordsToLatLng: coordsToLatLngSmart,
         pointToLayer: (feature, latlng) => {
-          const t = feature.properties.temp;
+          const t = Number(feature.properties?.temp);
+          const col = colorForTempGradient(t, stats.min, stats.max);
           return L.circleMarker(latlng, {
-            radius: 6,
-            weight: 1,
-            fillOpacity: 0.7,
-            color: colorForTemp(t)
+            radius: 4,
+            weight: 0,
+            color: col,
+            fillColor: col,
+            fillOpacity: 0.8
           });
         },
         onEachFeature: (feature, l) => {
-          const p = feature.properties;
-          l.bindPopup(`<b>Temp:</b> ${p.temp}°C<br><b>Data:</b> ${p.date}`);
+          const p = feature.properties || {};
+          const t = Number(p.temp);
+          const tempTxt = Number.isFinite(t) ? t.toFixed(1) : (p.temp ?? "-");
+          l.bindPopup(`<b>Temp:</b> ${tempTxt} ${unit}<br><b>Data:</b> ${p.date ?? "-"}<br><b>Asset:</b> ${p.asset ?? "-"}<br><b>Scene:</b> ${p.scene ?? "-"}`);
         }
       }).addTo(map);
 
-      // 3) staty (proste)
-      const temps = geojson.features.map(f => f.properties.temp);
-      const min = Math.min(...temps);
-      const max = Math.max(...temps);
-      const avg = temps.reduce((a,b)=>a+b,0) / temps.length;
-      document.getElementById('stats').textContent =
-        `min: ${min.toFixed(1)}°C | avg: ${avg.toFixed(1)}°C | max: ${max.toFixed(1)}°C`;
+      console.log("HOTSPOTS bounds:", hotspotsLayer.getBounds());
+
     }
 
-    // obsługa selecta
     const dateSelect = document.getElementById('dateSelect');
-    dateSelect.addEventListener('change', () => loadHotspots(dateSelect.value));
+    dateSelect.addEventListener('change', () => loadHotspots(dateSelect.value).catch(e => alert(e.message)));
 
-    // start
-    loadHotspots(dateSelect.value).catch(err => alert(err.message));
+    (async () => {
+      try {
+        await loadBoundaryAndSatellite();
+      } catch (e) {
+        setMsg("Nie udało się wczytać granic Krakowa – satelita bez przycinania.");
+        console.warn("Boundary error:", e);
+
+        const satFallback = L.tileLayer(esriUrl, { maxZoom: 19, attribution: "Tiles &copy; Esri" }).addTo(map);
+        satFallback.setOpacity(0.55);
+        addOpacitySlider(satFallback, 55);
+      }
+
+      loadHotspots(dateSelect.value).catch(err => alert(err.message));
+    })();
   </script>
 </body>
 </html>
